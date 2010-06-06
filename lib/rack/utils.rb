@@ -1,4 +1,4 @@
-# -*- encoding: binary -*-
+# -*- encoding: utf-8 -*-
 
 require 'fileutils'
 require 'set'
@@ -563,7 +563,7 @@ module Rack
               data = {:type => content_type,
                       :name => name, :tempfile => body, :head => head}
             else
-              data = body
+              data = body.force_encoding(::Encoding::UTF_8)
             end
 
             Utils.normalize_params(params, name, data) unless data.nil?
