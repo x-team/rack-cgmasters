@@ -40,7 +40,7 @@ module Rack
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
         k, v = p.split('=', 2).map { |x| unescape(x) }
         if v =~ /^("|')(.*)\1$/
-          v = $2.gsub('\\'+$1, $1)
+          v = $2.gsub('\\'+$1, $1).force_encoding(::Encoding::UTF_8)
         end
         if cur = params[k]
           if cur.class == Array
@@ -61,7 +61,7 @@ module Rack
       params = {}
 
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
-        k, v = unescape(p).split('=', 2)
+        k, v = unescape(p).force_encoding(::Encoding::UTF_8).split('=', 2)
         normalize_params(params, k, v)
       end
 
