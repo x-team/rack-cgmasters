@@ -1,6 +1,5 @@
-# -*- encoding: utf-8 -*-
+# -*- encoding: binary -*-
 
-require 'fileutils'
 require 'set'
 require 'tempfile'
 
@@ -40,8 +39,9 @@ module Rack
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
         k, v = p.split('=', 2).map { |x| unescape(x) }
         if v =~ /^("|')(.*)\1$/
-          v = $2.gsub('\\'+$1, $1).force_encoding(::Encoding::UTF_8)
+          v = $2.gsub('\\'+$1, $1)
         end
+        v.force_encoding(::Encoding::UTF_8)
         if cur = params[k]
           if cur.class == Array
             params[k] << v
@@ -61,7 +61,8 @@ module Rack
       params = {}
 
       (qs || '').split(d ? /[#{d}] */n : DEFAULT_SEP).each do |p|
-        k, v = unescape(p).force_encoding(::Encoding::UTF_8).split('=', 2)
+        k, v = unescape(p).split('=', 2)
+        v.force_encoding(::Encoding::UTF_8) if v
         normalize_params(params, k, v)
       end
 
@@ -193,12 +194,12 @@ module Rack
         "#{domain}#{path}#{expires}#{secure}#{httponly}"
 
       case header["Set-Cookie"]
-      when nil, ''
-        header["Set-Cookie"] = cookie
-      when String
-        header["Set-Cookie"] = [header["Set-Cookie"], cookie].join("\n")
       when Array
-        header["Set-Cookie"] = (header["Set-Cookie"] + [cookie]).join("\n")
+        header["Set-Cookie"] << cookie
+      when String
+        header["Set-Cookie"] = [header["Set-Cookie"], cookie]
+      when nil
+        header["Set-Cookie"] = cookie
       end
 
       nil
@@ -206,24 +207,13 @@ module Rack
     module_function :set_cookie_header!
 
     def delete_cookie_header!(header, key, value = {})
-      case header["Set-Cookie"]
-      when nil, ''
-        cookies = []
-      when String
-        cookies = header["Set-Cookie"].split("\n")
-      when Array
-        cookies = header["Set-Cookie"]
+      unless Array === header["Set-Cookie"]
+        header["Set-Cookie"] = [header["Set-Cookie"]].compact
       end
 
-      cookies.reject! { |cookie|
-        if value[:domain]
-          cookie =~ /\A#{escape(key)}=.*domain=#{value[:domain]}/
-        else
-          cookie =~ /\A#{escape(key)}=/
-        end
+      header["Set-Cookie"].reject! { |cookie|
+        cookie =~ /\A#{escape(key)}=/
       }
-
-      header["Set-Cookie"] = cookies.join("\n")
 
       set_cookie_header!(header, key,
                  {:value => '', :path => nil, :domain => nil,
@@ -303,8 +293,7 @@ module Rack
       end
 
       def [](k)
-        super(@names[k]) if @names[k]
-        super(@names[k.downcase])
+        super(@names[k] ||= @names[k.downcase])
       end
 
       def []=(k, v)
@@ -491,31 +480,11 @@ module Rack
                 head = buf.slice!(0, i+2) # First \r\n
                 buf.slice!(0, 2)          # Second \r\n
 
-                token = /[^\s()<>,;:\\"\/\[\]?=]+/
-                condisp = /Content-Disposition:\s*#{token}\s*/i
-                dispparm = /;\s*(#{token})=("(?:\\"|[^"])*"|#{token})*/
-
-                rfc2183 = /^#{condisp}(#{dispparm})+$/i
-                broken_quoted = /^#{condisp}.*;\sfilename="(.*?)"(?:\s*$|\s*;\s*#{token}=)/i
-                broken_unquoted = /^#{condisp}.*;\sfilename=(#{token})/i
-
-                if head =~ rfc2183
-                  filename = Hash[head.scan(dispparm)]['filename']
-                  filename = $1 if filename and filename =~ /^"(.*)"$/
-                elsif head =~ broken_quoted
-                  filename = $1
-                elsif head =~ broken_unquoted
-                  filename = $1
-                end
-
-                if filename && filename !~ /\\[^\\"]/
-                  filename = Utils.unescape(filename).gsub(/\\(.)/, '\1')
-                end
-
+                filename = head[/Content-Disposition:.* filename=(?:"((?:\\.|[^\"])*)"|([^;\s]*))/ni, 1]
                 content_type = head[/Content-Type: (.*)#{EOL}/ni, 1]
                 name = head[/Content-Disposition:.*\s+name="?([^\";]*)"?/ni, 1] || head[/Content-ID:\s*([^#{EOL}]*)/ni, 1]
 
-                if filename
+                if content_type || filename
                   body = Tempfile.new("RackMultipart")
                   body.binmode  if body.respond_to?(:binmode)
                 end
@@ -552,7 +521,8 @@ module Rack
               # This handles the full Windows paths given by Internet Explorer
               # (and perhaps other broken user agents) without affecting
               # those which give the lone filename.
-              filename = filename.split(/[\/\\]/).last
+              filename =~ /^(?:.*[:\\\/])?(.*)/m
+              filename = $1
 
               data = {:filename => filename, :type => content_type,
                       :name => name, :tempfile => body, :head => head}
@@ -563,7 +533,8 @@ module Rack
               data = {:type => content_type,
                       :name => name, :tempfile => body, :head => head}
             else
-              data = body.force_encoding(::Encoding::UTF_8)
+              data = body
+              data.force_encoding(::Encoding::UTF_8)
             end
 
             Utils.normalize_params(params, name, data) unless data.nil?
